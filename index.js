@@ -1,6 +1,10 @@
+require('dotenv').config();
 const express = require('express');
 const utils = require('./utils');
 const morgan = require('morgan');
+const Person = require('./models/person');
+const errorHandler = require('./middleware/errorhandler');
+const hasFields = require('./middleware/has-fields');
 const cors = require('cors');
 const app = express();
 
@@ -17,85 +21,69 @@ morgan.token('body', (req, res) => {
 
 app.use(morgan(':method :url :status :res[content-length] - :response-time ms :body'));
 
-let persons = [
-    {
-        name: "Julius Caesar",
-        number: "45983456",
-        id: 1
-    },
-    {
-        name: "Augustus Caesar",
-        number: "729464753",
-        id: 2
-    },
-    {
-        name: "Tiberius",
-        number: "48935792892",
-        id: 3
-    },
-    {
-        name: "Caligula",
-        number: "84963735378",
-        id: 4
-    },
-]
-
 app.get('/api/persons', (req, res) => {
-    return res.json(persons);
+    Person.find({}).then(persons => {
+        res.json(persons);
+    });
 })
 
 app.get('/info', (req, res) => {
-    const info = `<p>Phonebook has info for ${persons.length} people</P>
+    Person.countDocuments({}).then(count => {
+        const info = `<p>Phonebook has info for ${count} people</P>
                 <p>${new Date()}</p>`;
-    return res.send(info);
+        return res.send(info);
+    });
 });
 
-app.get('/api/persons/:id', (req, res) => {
-    const id = Number(req.params.id);
-    const person = persons.find(person => person.id === id)
-    if (person) {
-        return res.json(person);
-    } else {
-        return res.status(404).end();
-    }
+app.get('/api/persons/:id', (req, res, next) => {
+    const id = req.params.id;
+    Person.findById(id).then(person => {
+        if (person) {
+            return res.json(person);
+        } else {
+            return res.status(404).end();
+        }
+    }).catch(error => next(error));
 });
 
-app.delete('/api/persons/:id', (req, res) => {
-    const id = Number(req.params.id);
-    const toRemove = persons.find(person => person.id === id);
-    if (toRemove) {
-        persons = persons.filter(person => person.id !== id);
-        return res.status(204).end();
-    } else {
-        return res.status(404).end();
-    }
+app.delete('/api/persons/:id', (req, res, next) => {
+    const id = req.params.id;
+    Person.findByIdAndDelete(id).then(() => {
+        res.status(204).end();
+    })
+    .catch(error => {
+        next(error);
+    });
 })
 
-app.post('/api/persons', (req, res) => {
+app.post('/api/persons', hasFields(['name', 'number']), (req, res, next) => {
+    const person = new Person({
+        name: req.body.name,
+        number: req.body.number
+    });
+    person.save().then(savedPerson => {
+        return res.status(201).json(savedPerson);
+    }).catch(error => next(error));
+});
+
+app.put('/api/persons/:id', hasFields(['name', 'number']), (req, res, next) => {
     const person = {
         name: req.body.name,
-        number: req.body.number,
-        id: utils.makeId()
-    };
-    
-    let error = '';
-    if (!person.number) error += 'Person must have a number. ';
-    if (!person.name) error += 'Person must have a name. ';
-    else if (persons.find(p => p.name === person.name)) error += 'Person with this name already exists.';
-
-    if (!error) {
-        persons = persons.concat(person);
-        return res.status(201).json(person);
-    } else {
-        return res.status(400).json({ error: error })
+        number: req.body.number
     }
+    Person.findByIdAndUpdate(req.params.id, person, {new: true})
+        .then(updatedPerson => {
+            return res.json(updatedPerson);
+        }).catch(error => next(error));
 });
 
 app.use((req, res) => {
     res.status(404).json({error: 'No such endpoint'})
 });
 
-const PORT = process.env.PORT || 3001
+app.use(errorHandler);
+
+const PORT = process.env.PORT
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`)
 })
